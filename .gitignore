@@ -1,0 +1,43 @@
+# Local IDE settings
+.idea/
+*.iml
+.vscode/
+
+# Java build outputs
+target/
+out/
+*.class
+
+# Python environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Local environment configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+
+# Logs and runtime data
+*.log
+logs/
+recordings/
+transcripts/
+
+# Operating system files
+Thumbs.db
+.DS_Store
