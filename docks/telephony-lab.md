@@ -1,0 +1,5 @@
+- Debian 12 VM with Asterisk/FreePBX.
+- MicroSIP extension 1001 registered successfully.
+- Echo test *43 passed: instructions and returned voice were clear.
+- Extensions 1001 and 1002 created; only 1001 tested so far.
+- The negotiated codec, once checked.
