@@ -397,3 +397,103 @@ The development environment can now:
 
 [//]: # ()
 [//]: # (This will connect the working telephone infrastructure to the application layer.)
+
+## 12. Progress update — 18 November 2026
+
+
+### Installed software versions recorded
+
+Confirmed the installed versions:
+
+- Asterisk 22.11.0.
+- FreePBX FW Console 17.0.33.4.
+- Python 3.14.0 for the telephony controller.
+- `websockets==17.2` for the Python event connection.
+
+### Dedicated, stable lab network implemented
+
+Created the internal Hyper-V switch `AI-Secretary-Lab` and added a second network adapter to the PBX VM.
+
+| Component | Configuration |
+|---|---|
+| Windows lab adapter | `192.168.250.1/24` |
+| Debian lab adapter, `eth1` | Static address `192.168.250.10/24` |
+| Debian internet adapter, `eth0` | DHCP through the existing Default Switch |
+| Default route | Remains on `eth0` |
+| Persistent lab configuration | `/etc/network/interfaces.d/ai-secretary-lab` |
+
+The dedicated network gives SSH, web administration, and software phones a stable PBX address. The existing connection continues providing internet access. No gateway was added to the dedicated lab adapters.
+
+Added `192.168.250.1/32` to the FreePBX firewall's trusted zone, updated SIP local-network settings, and moved both softphone accounts to `192.168.250.10`.
+
+Verified after reboot and firewall startup:
+
+- The PBX retained its fixed address.
+- SSH access worked.
+- FreePBX's firewall and monitor processes were running.
+- Extensions 1001 and 1002 showed `Avail` through the Windows lab address.
+- The user confirmed the local calling and echo tests worked.
+
+### Protected Asterisk ARI access established
+
+Verified that Asterisk's ARI modules and Stasis application were available. Enabled ARI and configured the dedicated development account `ai-secretary-dev`.
+
+Asterisk HTTP remains on the VM's loopback address, `127.0.0.1:8088`. An SSH tunnel exposes it only on Windows loopback at `127.0.0.1:18088` for development.
+
+This keeps the ARI HTTP port off the VM's network interfaces and encrypts the control connection between Windows and Debian. It is separate from SIP/RTP media encryption.
+
+Authenticated requests verified:
+
+- `/ari/applications`: the `ai-secretary` application was registered while the controller was connected.
+- `/ari/sounds/hello-world`: the fixed greeting was available, including English formats.
+
+### Python telephony controller created
+
+Created the separate `voice/telephony-controller` project with its own virtual environment and dependency file. It keeps telephone control separate from future speech processing in `voice-runtime`.
+
+Implemented:
+
+1. A hidden password prompt, keeping the ARI password out of source code.
+2. A WebSocket connection to receive JSON events from Asterisk.
+3. Logging of event types rather than complete events containing caller information.
+4. Handling of `StasisStart` to identify the incoming channel.
+5. An HTTP command to answer the channel.
+6. A subsequent HTTP command to play `sound:hello-world`.
+7. Connection timeouts, error handling, and Ctrl+C shutdown.
+
+HTTP commands use Python's standard library and run through `asyncio.to_thread`. This avoids blocking the asynchronous event loop during each HTTP request, while keeping the first implementation small. Answering is awaited before playback is requested. The current event handler processes these operations sequentially; production concurrency remains future work.
+
+### Dedicated greeting-test route added
+
+Configured internal number `7000` in `/etc/asterisk/extensions_custom.conf`, under `from-internal-custom`.
+
+The route selects English, applies a 60-second absolute timeout, and sends the call to `Stasis(ai-secretary)`. A following `Hangup()` ends the call when execution returns from Stasis.
+
+Using the custom dialplan file separates our additions from FreePBX-generated configuration. The time limit bounds the lab test while application-level completion handling is being developed. No public telephone number is required for this internal test.
+
+### Python-controlled call verified
+
+The test produced the following application output:
+
+```text
+Event: StasisStart
+Test call answered.
+Greeting playback requested.
+Event: ChannelStateChange
+Event: PlaybackStarted
+Event: PlaybackFinished
+Event: ChannelHangupRequest
+Event: StasisEnd
+```
+
+This confirms that the call entered the application, the answer and playback commands succeeded, Asterisk reported playback completion, and the channel subsequently left the application. The submitted log does not independently establish headset audibility or the cause of hangup.
+
+The greeting is prerecorded audio played by Asterisk. Live audio exchange with Python, speech recognition, AI-generated responses, and text-to-speech are not part of this milestone.
+
+[//]: # (### Next development milestone)
+
+[//]: # ()
+[//]: # (Add explicit call lifecycle handling: track playback, end the test call automatically when playback finishes, and handle early hangup and cleanup. Then verify repeated calls and disconnection behavior before introducing live speech processing.)
+
+[//]: # ()
+[//]: # (Automatic hangup on playback completion, automatic reconnect, and concurrent call management have not yet been implemented. The current work remains a local development lab.)

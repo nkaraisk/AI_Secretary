@@ -1,0 +1,2 @@
+# This library handles the WebSocket connection. We’re choosing a small library because we only need an event connection for testing.
+websockets==17.2
