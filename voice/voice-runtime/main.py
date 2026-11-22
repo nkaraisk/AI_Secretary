@@ -10,6 +10,7 @@ def fetch_demo_configuration() -> dict:
         "http://127.0.0.1:8081",
     ).rstrip("/")
 
+
 # HTTP GET: requests information without creating or changing a booking.
     request = Request(
         url=f"{base_url}/api/v1/demo/tenant-configuration",
@@ -20,6 +21,7 @@ def fetch_demo_configuration() -> dict:
 # Five-second timeout: prevents waiting indefinitely.
     with urlopen(request, timeout=5) as response:
         return json.load(response)
+
 
 
 def main() -> None:

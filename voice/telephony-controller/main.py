@@ -8,6 +8,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import ProxyHandler, Request, build_opener
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake
+from uuid import uuid4  # Creates a unique ID for each greeting playback.
 
 # Identifies the account that authenticates with Asterisk. Credentials establish permission.
 ARI_USERNAME = "ai-secretary-dev"
@@ -29,6 +30,8 @@ def send_ari_command(
     path: str,
     headers: dict[str, str],
     parameters: dict[str, str] | None = None,
+    *, # Arguments after this must be supplied by name.
+    method: str = "POST", # The default remains POST, so the existing calls still work.
 ) -> None:
     url = f"{ARI_HTTP_URL}{path}"
 
@@ -38,7 +41,7 @@ def send_ari_command(
     request = Request(
         url,
         headers=headers,
-        method="POST",
+        method=method,
     )
 
     # Connect directly to the local SSH tunnel, ignoring system proxies.
@@ -47,12 +50,42 @@ def send_ari_command(
     with opener.open(request, timeout=5) as response:
         response.read()
 
+
+# Function for hanging up
+async def hang_up(
+    channel_id: str,
+    headers: dict[str, str],
+) -> None:
+    channel_path = f"/channels/{quote(channel_id, safe='')}"
+
+    try:
+        await asyncio.to_thread(
+            send_ari_command,
+            channel_path,
+            headers,
+            method="DELETE",
+        )
+        print("Hangup request accepted.")
+
+    except HTTPError as error:
+        if error.code == 404: # The caller might hang up just before our request reaches Asterisk. In that case, the channel is already gone.
+            print("Channel already gone; no further hangup needed.")
+        else:
+            print(f"Hangup request failed: HTTP {error.code}.")
+
+    except (URLError, TimeoutError, OSError):
+        print("Could not send the hangup request. Check the SSH tunnel.")
+
+
+
 # Answer-and-greet function
 async def answer_and_greet(
     channel_id: str,
     headers: dict[str, str],
+    playback_channels: dict[str, str],
 ) -> None:
     channel_path = f"/channels/{quote(channel_id, safe='')}" # safely puts the channel ID into a URL path
+    playback_id = str(uuid4())
 
     try:
         await asyncio.to_thread( # await: ensures answering completes before we request playback.
@@ -62,21 +95,27 @@ async def answer_and_greet(
         )
         print("Test call answered.")
 
+        # Remember the owner before asking Asterisk to start playback.
+        playback_channels[playback_id] = channel_id
+
         await asyncio.to_thread( # ensures answering completes before we request playback.
             send_ari_command,    # asyncio.to_thread: runs the blocking HTTP operation in a worker thread so it doesn’t block the entire asynchronous event loop.
-            f"{channel_path}/play",
+            f"{channel_path}/play/{playback_id}",
             headers,
-            {"media": "sound:hello-world"}, # Refers to an audio prompt on the PBX
+            {"media": "sound:hello-world,sound:silence/1"}, # Refers to an audio prompt on the PBX
         )
         print("Greeting playback requested.")
 
     except HTTPError as error:
+        playback_channels.pop(playback_id, None) # Remove this playback if present; otherwise return None. That lets cleanup run without raising an error when the entry has already been removed.
+
         if error.code == 404:
             print("ARI resource not found; the caller may have hung up.")
         else:
             print(f"ARI command failed: HTTP {error.code}.")
 
     except (URLError, TimeoutError, OSError):
+        playback_channels.pop(playback_id, None) # Remove this playback if present; otherwise return None. That lets cleanup run without raising an error when the entry has already been removed.
         print("Could not complete the call command. Check the SSH tunnel.")
 
 
@@ -91,6 +130,9 @@ async def listen_for_events(password: str) -> None:
     headers = {
         "Authorization": f"Basic {encoded_credentials}"
     }
+
+    # Tracks only the greeting playbacks created by this connection.
+    playback_channels: dict[str, str] = {}
 
     # Opens the connection and closes it when we leave that block
     async with connect(
@@ -119,9 +161,39 @@ async def listen_for_events(password: str) -> None:
             # StasisStart means a channel has entered our application. Ordinary calls between 1001 and 1002 won’t automatically enter it.
             if event_type == "StasisStart":
                 channel_id = event["channel"]["id"]
-                await answer_and_greet(channel_id, headers)
+                await answer_and_greet(channel_id, headers, playback_channels)
 
-            if event_type == "ApplicationReplaced":
+            elif event_type == "PlaybackFinished":
+                playback_id = event["playback"]["id"]
+                # Remove before sending hangup. Once the completion event is handled, the same ID can’t trigger another hangup through this mapping.
+                channel_id = playback_channels.pop(playback_id, None)
+
+                # Only act on a playback that this controller tracked.
+                if channel_id is not None:
+                    print("Tracked greeting ended; requesting hangup.")
+                    await hang_up(channel_id, headers)
+
+            elif event_type == "StasisEnd":
+                channel_id = event["channel"]["id"]
+
+                # Collect matching entries before modifying the dictionary.
+                finished_playbacks = [
+                    playback_id
+                    for playback_id, owner_channel_id
+                    in playback_channels.items()
+                    if owner_channel_id == channel_id
+                ]
+
+                # If the caller leaves early, any remaining greeting associations for that channel are removed.
+                for playback_id in finished_playbacks:
+                    playback_channels.pop(playback_id, None)
+
+                print(
+                    "Channel left the application. "
+                    f"Tracked greetings remaining: {len(playback_channels)}"
+                )
+
+            elif event_type == "ApplicationReplaced":
                 print("Another connection replaced this application.")
                 return
 
