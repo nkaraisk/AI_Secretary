@@ -212,3 +212,59 @@ This is a prerecorded greeting, not an AI reply yet. Python does not yet hang up
 
 [//]: # ()
 [//]: # (Expect `200 OK` and `ai-secretary` while Python is connected.)
+
+
+## Milestone 6: Hear a phone call through Python
+
+Verified on 23 November 2026.
+
+Extension `7001` sends the caller's audio to `voice/voice-runtime/media_echo.py`.
+Python sends the audio back on the same connection, so the caller hears their
+own words. Extension `7000` remains the prerecorded greeting test.
+
+### PBX configuration
+
+In `/etc/asterisk/websocket_client.conf`:
+
+```ini
+[ai-secretary-echo]
+type = websocket_client
+connection_type = per_call_config
+uri = ws://127.0.0.1:18765
+protocols = media
+```
+
+In the existing `[from-internal-custom]` section of
+`/etc/asterisk/extensions_custom.conf`:
+
+```ini
+exten => 7001,1,Set(TIMEOUT(absolute)=60)
+ same => n,Dial(WebSocket/ai-secretary-echo/c(ulaw)f(json))
+ same => n,Hangup()
+```
+
+After editing the configuration, reload and check the route:
+
+```bash
+sudo asterisk -rx "module reload res_websocket_client.so"
+sudo asterisk -rx "dialplan reload"
+sudo asterisk -rx "dialplan show 7001@from-internal"
+```
+
+### Run the test again
+
+1. Start the PBX. In Windows PowerShell, open the reverse tunnel and leave it running:
+
+   ```powershell
+   ssh -N -o ExitOnForwardFailure=yes -R 127.0.0.1:18765:127.0.0.1:18765 pbxadmin@192.168.250.10
+   ```
+
+2. In a second terminal, start the listener from `voice/voice-runtime`:
+
+   ```powershell
+   .\.venv\Scripts\python.exe media_echo.py
+   ```
+
+3. Dial `7001`, speak a few words, listen for them, and hang up.
+   During the verified call, Python reported `ulaw` and echoed 1,252 binary
+   messages. The caller heard the returned speech. The count varies with call length.
